@@ -9,6 +9,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -17,36 +18,55 @@ import (
 )
 
 var (
-	address                                          string
-	authToken                                        = env.Get("WEBHOOK_AUTH_TOKEN", "")
-	remoteEndpoint, remoteAccessKey, remoteSecretKey string
-	insecure                                         bool
-	dryRun                                           bool
+	address   string
+	authToken = env.Get("WEBHOOK_AUTH_TOKEN", "")
+	insecure  bool
+	dryRun    bool
 )
+
+type Remote struct {
+	Endpoint  string
+	AccessKey string
+	SecretKey string
+	Insecure  bool
+}
 
 func main() {
 	flag.StringVar(&address, "address", ":8080", "bind to a specific ADDRESS:PORT, ADDRESS can be an IP or hostname")
-	flag.StringVar(&remoteEndpoint, "remote-endpoint", "", "S3 endpoint URL of the remote target")
-	flag.StringVar(&remoteAccessKey, "remote-access-key", "", "S3 Access Key of the remote target")
-	flag.StringVar(&remoteSecretKey, "remote-secret-key", "", "S3 Secret Key of the remote target")
-	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification")
+	flag.BoolVar(&insecure, "insecure", false, "Disable TLS verification for all the remote sites")
 	flag.BoolVar(&dryRun, "dry-run", false, "Enable dry run mode")
-
 	flag.Parse()
 
-	if remoteEndpoint == "" {
-		log.Fatalln("remote endpoint is not provided")
+	envs := env.List("REMOTE_ENDPOINT_")
+	remoteTargets := make(map[string]Remote, len(envs))
+	for _, k := range envs {
+		targetName := strings.TrimPrefix(k, "REMOTE_ENDPOINT_")
+		r := Remote{
+			Endpoint:  env.Get("REMOTE_ENDPOINT_"+targetName, ""),
+			AccessKey: env.Get("REMOTE_ACCESS_"+targetName, ""),
+			SecretKey: env.Get("REMOTE_SECRET_"+targetName, ""),
+			Insecure:  env.Get("REMOTE_INSECURE_"+targetName, strconv.FormatBool(insecure)) == "true",
+		}
+		if r.AccessKey == "" {
+			log.Fatalf("REMOTE_ACCESS_%s not set", targetName)
+		}
+		if r.SecretKey == "" {
+			log.Fatalf("REMOTE_SECRET_%s not set", targetName)
+		}
+		remoteTargets[targetName] = r
+	}
+	if len(remoteTargets) == 0 {
+		log.Fatal("no remote sites provided")
 	}
 
-	if remoteAccessKey == "" {
-		log.Fatalln("remote access key is not provided")
+	var remoteClients []*minio.Client
+	for name, target := range remoteTargets {
+		remoteClient, err := getS3Client(target.Endpoint, target.AccessKey, target.SecretKey, target.Insecure)
+		if err != nil {
+			log.Fatalf("unable to create s3 client for %v; %v", name, err)
+		}
+		remoteClients = append(remoteClients, remoteClient)
 	}
-
-	if remoteSecretKey == "" {
-		log.Fatalln("remote secret key is not provided")
-	}
-
-	s3Client := getS3Client(remoteEndpoint, remoteAccessKey, remoteSecretKey, insecure)
 
 	err := http.ListenAndServe(address, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authToken != "" {
@@ -99,9 +119,11 @@ func main() {
 				versionID = reqQ["versionId"].(string)
 			}
 			if !dryRun {
-				if err := s3Client.RemoveObject(context.Background(), bucket, object, minio.RemoveObjectOptions{VersionID: versionID}); err != nil {
-					log.Printf("unable to delete the object: %v; %v\n", object, err)
-					return
+				for _, remoteClient := range remoteClients {
+					if err := remoteClient.RemoveObject(context.Background(), bucket, object, minio.RemoveObjectOptions{VersionID: versionID}); err != nil {
+						log.Printf("unable to delete the object: %v from site %v; %v\n", object, remoteClient.EndpointURL().Host, err)
+						return
+					}
 				}
 			}
 			if versionID == "" {
@@ -117,28 +139,26 @@ func main() {
 	}
 }
 
-func getS3Client(endpoint string, accessKey string, secretKey string, insecure bool) *minio.Client {
+func getS3Client(endpoint string, accessKey string, secretKey string, insecure bool) (*minio.Client, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, err
 	}
-
 	secure := strings.EqualFold(u.Scheme, "https")
 	transport, err := minio.DefaultTransport(secure)
 	if err != nil {
-		log.Fatalln(err)
+		return nil, err
 	}
 	if transport.TLSClientConfig != nil {
 		transport.TLSClientConfig.InsecureSkipVerify = insecure
 	}
-
 	s3Client, err := minio.New(u.Host, &minio.Options{
 		Creds:     credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure:    secure,
 		Transport: transport,
 	})
 	if err != nil {
-		log.Fatalln(err)
+		return nil, err
 	}
-	return s3Client
+	return s3Client, nil
 }
