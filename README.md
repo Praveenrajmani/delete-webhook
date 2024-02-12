@@ -5,17 +5,15 @@ Usage of ./delete-webhook:
   -dry-run
     	Enable dry run mode
   -insecure
-    	Disable TLS verification
-  -remote-access-key string
-    	S3 Access Key of the remote target
-  -remote-endpoint string
-    	S3 endpoint URL of the remote target
-  -remote-secret-key string
-    	S3 Secret Key of the remote target
+    	Disable TLS verification for all the remote sites
 ```
 
 Example :-
 
 ```sh
-./delete-webhook --address 127.0.0.1:8080 --remote-endpoint https://play.minio.io:9000 --remote-access-key <access> --remote-secret-key <secret> --dry-run
+export REMOTE_ENDPOINT_site1=http://127.0.0.1:9002
+export REMOTE_ACCESS_site1=<access-key>
+export REMOTE_SECRET_site1=<secret-key>
+export REMOTE_INSECURE_site1=true # optional; default: false.
+./delete-webhook --address 127.0.0.1:8080
 ```

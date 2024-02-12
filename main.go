@@ -65,8 +65,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("unable to create s3 client for %v; %v", name, err)
 		}
+		fmt.Printf("Configured remote site; name: %v, host: %v\n", name, remoteClient.EndpointURL().Host)
 		remoteClients = append(remoteClients, remoteClient)
 	}
+
+	fmt.Println("Started listening...")
 
 	err := http.ListenAndServe(address, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authToken != "" {
