@@ -69,7 +69,7 @@ func main() {
 		remoteClients = append(remoteClients, remoteClient)
 	}
 
-	fmt.Println("Started listening...")
+	fmt.Println("Started listening...\n")
 
 	err := http.ListenAndServe(address, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if authToken != "" {
@@ -92,34 +92,33 @@ func main() {
 				http.Error(w, "error marshalling response body", http.StatusBadRequest)
 				return
 			}
-			var apiData map[string]interface{}
-			apiData, ok := jsonData["api"].(map[string]interface{})
+			if eventName, ok := jsonData["EventName"].(string); !ok || eventName != "s3:ObjectRemoved:NoOP" {
+				return
+			}
+			records, ok := jsonData["Records"].([]interface{})
+			if !ok || len(records) == 0 {
+				log.Println("missing records in the request body")
+				http.Error(w, "missing records in the request body", http.StatusBadRequest)
+				return
+			}
+			record := records[0].(map[string]interface{})
+			s3Data, ok := record["s3"].(map[string]interface{})
 			if !ok {
-				http.Error(w, "missing api in the request body", http.StatusBadRequest)
+				log.Println("missing records in the request body")
+				http.Error(w, "missing s3 data in the request body", http.StatusBadRequest)
 				return
 			}
-			if apiData["name"].(string) != "DeleteObject" || apiData["statusCode"].(float64) != 204 {
-				return
+			var bucket string
+			if bucketData, ok := s3Data["bucket"].(map[string]interface{}); ok {
+				bucket, _ = bucketData["name"].(string)
 			}
-			var responseHeaders map[string]interface{}
-			responseHeaders, ok = jsonData["responseHeader"].(map[string]interface{})
-			if !ok {
-				return
+			var object, versionID string
+			if objectData, ok := s3Data["object"].(map[string]interface{}); ok {
+				object, _ = objectData["key"].(string)
+				versionID, _ = objectData["versionId"].(string)
 			}
-			if _, ok := responseHeaders["x-amz-delete-marker"].(string); ok {
-				return
-			}
-			if _, ok := responseHeaders["x-amz-version-id"].(string); ok {
-				return
-			}
-			bucket := apiData["bucket"].(string)
-			object := apiData["object"].(string)
 			if bucket == "" || object == "" {
 				return
-			}
-			var versionID string
-			if reqQ, ok := jsonData["requestQuery"].(map[string]interface{}); ok {
-				versionID = reqQ["versionId"].(string)
 			}
 			if !dryRun {
 				for _, remoteClient := range remoteClients {
