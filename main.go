@@ -120,13 +120,20 @@ func main() {
 			if bucket == "" || object == "" {
 				return
 			}
+			var failed bool
 			if !dryRun {
 				for _, remoteClient := range remoteClients {
 					if err := remoteClient.RemoveObject(context.Background(), bucket, object, minio.RemoveObjectOptions{VersionID: versionID}); err != nil {
+						failed = true
 						log.Printf("unable to delete the object: %v from site %v; %v\n", object, remoteClient.EndpointURL().Host, err)
-						return
 					}
 				}
+			}
+			if failed {
+				// Purposefully not returning an error here, as there could be scenarios
+				// where the buckets won't be available in different sites, we can just
+				// ignore the errors and pass by
+				return
 			}
 			if versionID == "" {
 				fmt.Printf("Deleted %v/%v\n", bucket, object)
