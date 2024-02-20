@@ -123,7 +123,7 @@ func main() {
 			var failed bool
 			if !dryRun {
 				for _, remoteClient := range remoteClients {
-					if err := remoteClient.RemoveObject(context.Background(), bucket, object, minio.RemoveObjectOptions{VersionID: versionID}); err != nil {
+					if err := remoteClient.RemoveObject(context.Background(), bucket, object, minio.RemoveObjectOptions{VersionID: versionID, ForceDelete: true}); err != nil {
 						failed = true
 						log.Printf("unable to delete the object: %v from site %v; %v\n", object, remoteClient.EndpointURL().Host, err)
 					}
